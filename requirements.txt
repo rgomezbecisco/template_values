@@ -1,3 +1,4 @@
 catalystwan==0.41.3
+openpyxl==3.1.5
 Pygments==2.19.2
 urllib3==2.6.3
