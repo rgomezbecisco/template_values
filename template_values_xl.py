@@ -40,6 +40,7 @@ def get_static_vmanage_credentials():
     parser.add_argument("--VMANAGE_USER", required=False, default=USERNAME, help="VMANAGE Username")
     parser.add_argument("--VMANAGE_PASSWORD", required=False, default=PASSWORD, help="VMANAGE Password")
     parser.add_argument("--VMANAGE_PORT", default=PORT if PORT else 443, help="VMANAGE Port", type=int)
+    parser.add_argument("--verbose", action="store_true", help="Print column mismatch warnings")
 
     args = parser.parse_args()
 
@@ -48,6 +49,7 @@ def get_static_vmanage_credentials():
         args.VMANAGE_USER,
         args.VMANAGE_PASSWORD,
         args.VMANAGE_PORT,
+        args.verbose,
     )
 
 
@@ -58,6 +60,7 @@ def get_vmanage_credentials():
     parser.add_argument("--VMANAGE_USER", required=True, help="VMANAGE Username")
     parser.add_argument("--VMANAGE_PASSWORD", required=True, help="VMANAGE Password")
     parser.add_argument("--VMANAGE_PORT", default="443", help="VMANAGE Port", type=int)
+    parser.add_argument("--verbose", action="store_true", help="Print column mismatch warnings")
 
     args = parser.parse_args()
 
@@ -66,6 +69,7 @@ def get_vmanage_credentials():
         args.VMANAGE_USER,
         args.VMANAGE_PASSWORD,
         args.VMANAGE_PORT,
+        args.verbose,
     )
 
 
@@ -102,7 +106,7 @@ def sanitize_sheet_name(name):
     return name[:31]
 
 
-def add_sheet(wb, sheet_name, data):
+def add_sheet(wb, sheet_name, data, verbose=False):
     """Add a new sheet to the workbook and write data rows into it."""
     if not data:
         tprint(f"No data to write for sheet '{sheet_name}'")
@@ -120,11 +124,32 @@ def add_sheet(wb, sheet_name, data):
 
     ws = wb.create_sheet(title=safe_name)
 
-    headers = list(data[0].keys())
+    # Union of all keys across every row to handle rows with missing/extra keys
+    seen_keys: dict = {}
+    for item in data:
+        for k in item.keys():
+            if k not in seen_keys:
+                seen_keys[k] = None
+    headers = list(seen_keys.keys())
+
+    # Diagnostic: warn if any row has keys not present in row-0 or in a different order
+    if verbose:
+        row0_keys = list(data[0].keys())
+        for idx, item in enumerate(data):
+            row_keys = list(item.keys())
+            if row_keys != row0_keys:
+                tprint(
+                    f"[WARN] Sheet '{safe_name}' row {idx + 1} key mismatch — "
+                    f"missing: {set(row0_keys) - set(row_keys)}, "
+                    f"extra: {set(row_keys) - set(row0_keys)}, "
+                    f"order_diff: {row_keys != [k for k in row0_keys if k in row_keys]}"
+                )
+
     ws.append(headers)
 
+    # Lookup by key so column alignment is never driven by dict insertion order
     for item in data:
-        ws.append([str(v) if v is not None else "" for v in item.values()])
+        ws.append([str(item[h]) if item.get(h) is not None else "" for h in headers])
 
     tprint(f"Sheet '{safe_name}' written ({len(data)} rows)")
 
@@ -272,9 +297,9 @@ def get_values_per_template(session, template):
 
 if __name__ == "__main__":
 
-    url, username, password, port = get_static_vmanage_credentials()
+    url, username, password, port, verbose = get_static_vmanage_credentials()
     if not all([url, username, password, port]):
-        url, username, password, port = get_vmanage_credentials()
+        url, username, password, port, verbose = get_vmanage_credentials()
 
     try:
         with create_manager_session(
@@ -302,7 +327,7 @@ if __name__ == "__main__":
 
                 for template in template_info:
                     template_values = get_values_per_template(session, template)
-                    add_sheet(wb, template.get("template", "unknown"), template_values)
+                    add_sheet(wb, template.get("template", "unknown"), template_values, verbose=verbose)
 
                 save_workbook(wb)
 
